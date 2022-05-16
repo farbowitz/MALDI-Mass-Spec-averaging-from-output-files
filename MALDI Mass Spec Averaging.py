@@ -4,6 +4,7 @@ Created on Tue Apr 12 19:15:28 2022
 
 @author: Daniel
 """
+
 # LIBRARY DEPENDENCIES
 
 import pandas as pd
@@ -239,3 +240,11 @@ sample_list(grouping_file_path)
 ##access folder as a run
 ##each run is ordered into samples
 ##each sample is averaged from n datafiles
+
+#Possible Additions
+##Directly convert from XML output files (no R necessary!)
+##Statistical test prior to averaging -- check samples are same (Check if Kolmogorov-Smirnov Test is appropriate one)
+##Peak detection
+##Peak comparisons with known data
+###Statistical test for bone identification and degree of certainty
+##Plot data
