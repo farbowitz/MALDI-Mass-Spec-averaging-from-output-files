@@ -19,6 +19,7 @@ project_path = "C:/Users/Daniel/Desktop/Liz_MALDI_runs/"
 ## OPTIONAL- SAMPLE NAMING METHOD: assign a folder to keep CSV files (titled with the run name) which map column 1 wells (e.g. A1, B3, etc.) to sample names (e.g. sample 2, coppergate_fish). Use CAL for calibrant wells. 
 maps_folder_name = 'maps'
 ## default - adds folder for sample data under projet directory
+default_csv_url = 'https://github.com/farbowitz/MALDI-Mass-Spec-averaging-from-output-files/blob/main/Default%20-%20Sheet1.csv'
 
 
 # CLASSES
@@ -52,7 +53,7 @@ class Sample:
         self.name = output_name
         self.folder_path = folder_path
         self.output_path = output_path
-        #make empty file of column length, *SHOULD ASSIGN USING ARRAY LENGTH, UNLESS ALL MALDI RUNS ARE SAME SIZE* 
+        #make empty file of column length, *SHOULD ASSIGN USING ARRAY LENGTH, UNLESS ALL MALDI RUNS ARE SAME SIZE*, len(df) in pandas 
         running_total = [0] * 107875
         run_file_list = get_txt_files(self.folder_path)
         for file in run_file_list:
@@ -60,14 +61,18 @@ class Sample:
             filename = Title(file)
             if (str(filename.row)+str(filename.column)) in self.list:
                running_total += np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])
+        #check that files were found
+        self.unmodified = (running_total == [0] * 107875)
         df_average = running_total/self.size
         df_index = Datafile(self.folder_path+file).DataFrame['m/Z']
         df = pd.DataFrame(df_average, index=df_index)
         self.DataFrame = df
         
     def output_to_file(self):
-        self.DataFrame.to_csv(r''+self.output_path+self.name+'.txt', sep='\t', index=True, header=False)
-        #check if liz wants headers removed
+        if self.unmodified:
+            print('No files found containing '+self.list)
+        else:
+            self.DataFrame.to_csv(r''+self.output_path+self.name+'.txt', sep='\t', index=True, header=False)
         
     def identify_peaks(self):
         return None
@@ -105,11 +110,13 @@ class Run:
                 #better method needed, not index based (use split and check if lists are equivalent?), removed extra underscore from end of name
                 if self.name[:-1] in csv:
                   identifier_csv_path = maps_path+csv #filename, once found
-        #other methods -- notes, default based on Liz's data
+                #otherwise, use default csv map from github url
+                else:
+                  identifier_csv_path = default_csv_url
                                   
         df = pd.read_csv(identifier_csv_path, header=None)
         #df is assumed to have the first column be cell number, second column be sample name (CAL for calibrant)
-        second_column = df.iloc[:,1]
+        second_column = df.iloc[:,1] 
         filenames_to_create = list(set(second_column))
         #remove nan values, ignore CAL
         filenames_to_create = [x for x in filenames_to_create if (str(x)!='nan' and str(x)!='CAL') ]
