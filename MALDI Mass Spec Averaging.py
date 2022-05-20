@@ -11,6 +11,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from scipy.signal import find_peaks
+from Mass_Spec_Compare import peak_list
 
 
 # FUNDAMENTAL VARIABLE INPUTS
@@ -20,7 +22,25 @@ project_path = "C:/Users/Daniel/Desktop/Liz_MALDI_runs/"
 maps_folder_name = 'maps'
 ## default - adds folder for sample data under projet directory
 default_csv_url = 'https://github.com/farbowitz/MALDI-Mass-Spec-averaging-from-output-files/blob/main/Default%20-%20Sheet1.csv'
+peak_list = peak_list()
 
+#USEFUL FUNCTIONS
+
+def get_all_files(path):
+    file_list = []
+    for (dirpath, dirnames, filenames) in os.walk(path):
+        file_list.extend(filenames)
+    return file_list
+
+##find all text files within current directory
+def get_txt_files(path):
+    file_list = []
+    for element in os.listdir(path):
+        if element.endswith('.txt'):
+            file_list.append(element)
+    return file_list
+
+##Might need for default sample name assignment
 
 # CLASSES
 
@@ -62,11 +82,12 @@ class Sample:
             if (str(filename.row)+str(filename.column)) in self.list:
                running_total += np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])
         #check that files were found
-        self.unmodified = (running_total == [0] * 107875)
+        self.unmodified = (running_total.all() == 0)
         df_average = running_total/self.size
         df_index = Datafile(self.folder_path+file).DataFrame['m/Z']
         df = pd.DataFrame(df_average, index=df_index)
         self.DataFrame = df
+        self.average = np.asarray(df_average)
         
     def output_to_file(self):
         if self.unmodified:
@@ -79,12 +100,66 @@ class Sample:
     
     def clean_noise(self):
         return None        
-        
+    #Returns keyError -- data type issue?        
     def plot(self):
         plt.plot(self.DataFrame['m/Z'], self.DataFrame['intensity'])
         plt.xlabel('m/Z')
         plt.ylabel('Intensity (a.u.)')
+    
+    #rethink these functions, avoid replicating methods
+    def find_peaks(self):
+        X = self.DataFrame.index
+        y = self.average
+        #prominence is trough to peak tolerance for peak identification, set to a tenth of data's range
+        prominence = (np.max(y)-np.min(y))/10
+        #others --- height, width, tolerance
+        peaks = find_peaks(y, prominence=prominence)
+        peak_index = peaks[0]
 
+        plt.plot()
+        y_peaks = [y[index] for index in peak_index]
+        x_peaks = [X[index] for index in peak_index]
+        plt.scatter(x_peaks, y_peaks, c='orange')
+        plt.show()
+        self.x_peaks = x_peaks
+        self.y_peaks = y_peaks
+        
+    def infer_peak(self):
+        name_list = []
+        for item in peak_list:
+            name_list.append(item[1])
+        #severly confusing data types and methods here
+        indexer = [('Atlantic salmon' in name) for name in name_list]
+        print(np.asarray(peak_list)[np.asarray(indexer)])
+        
+    def peak_characterization(self):
+        #data
+        X = self.DataFrame.index
+        Y = self.average
+        '''#are step sizes all the same?
+        delta_xs = [(X[i]-X[i-1]) for i in range(1,len(X))]
+        print(delta_xs[0])
+        print(np.all(np.asarray(delta_xs)) == delta_xs[0])
+        #false, so what does delta_xs look like
+        print(delta_xs[57000:57100])
+        #not the same, but close! check:
+        print(all([(0.017<dx<0.042) for dx in delta_xs]))
+        #delta_xs appears to increase from ~0.018 to 0.041
+        '''
+        #playing around looking for individual peaks
+        #major prominence around 1220.6, index= 20521
+        sample_peak = 20521
+        #num_points around peak: ~5
+        delta_s = 8
+        sample_min = sample_peak - delta_s
+        sample_max = sample_peak + delta_s
+        sample_X = X[sample_min:sample_max]
+        sample_Y = Y[sample_min:sample_max]
+        plt.scatter(sample_X, sample_Y)
+        plt.show()
+        
+        
+        
 ## Assigns each folder as a Run, should receive data about how to assign samples
 class Run:
     def __init__(self,folder_path):
@@ -141,8 +216,10 @@ class Run:
         #Associate keys with sample names, make file output
         for key in self.master_dict.keys():
             files_to_use = self.master_dict.get(key)
-            Sample(files_to_use, key, self.folder_path, output_path).output_to_file()
             #export sample as txt
+            #find peaks and plot
+            Sample(files_to_use, key, self.folder_path, output_path).peak_characterization()
+    
                         
                 
 
@@ -183,23 +260,7 @@ print('Project averaging completed from '+project_path)
 
 
 
-#USEFUL FUNCTIONS
 
-def get_all_files(path):
-    file_list = []
-    for (dirpath, dirnames, filenames) in os.walk(path):
-        file_list.extend(filenames)
-    return file_list
-
-##find all text files within current directory
-def get_txt_files(path):
-    file_list = []
-    for element in os.listdir(path):
-        if element.endswith('.txt'):
-            file_list.append(element)
-    return file_list
-
-##Might need for default sample name assignment
 '''
 #arranging triplicate combinations into samples as per Liz's use
 def char_range(c1, c2):
