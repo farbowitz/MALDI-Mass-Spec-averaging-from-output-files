@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import os
 from scipy.signal import find_peaks
 from Mass_Spec_Compare import peak_list
-
+from lmfit.models import LorentzianModel, Model, GaussianModel, SplitLorentzianModel, MoffatModel, VoigtModel, PseudoVoigtModel, Pearson7Model, StudentsTModel, LinearModel
 
 # FUNDAMENTAL VARIABLE INPUTS
 
@@ -41,6 +41,43 @@ def get_txt_files(path):
     return file_list
 
 ##Might need for default sample name assignment
+
+##
+def find_nearest_dex(array, number, direction=None): 
+    idx = -1
+    if direction is None:
+        ser = np.abs(array-number)
+        idx = ser.get_loc(ser.min())
+    elif direction == 'backward':
+        _delta = number - array
+        _delta_positive = _delta[_delta > 0]
+        if not _delta_positive.empty:
+            idx = _delta.get_loc((_delta_positive.min()))
+    elif direction == 'forward':
+        _delta = array - number
+        _delta_positive = _delta[_delta >= 0]
+        if not _delta_positive.empty:
+            idx = _delta.get_loc(_delta_positive.min())
+    return idx
+
+## get points around center
+def interval(dataX, dataY, center, deviation):
+    bottom = center-deviation
+    top = center+deviation
+    newX = dataX[bottom:top]
+    newY = dataY[bottom:top]
+    return newX, newY
+
+#plot using models given via lmfit.models library, e.g. GaussianModel()
+def plot_with_model(X, Y, model, mname):
+    params = model.guess(Y, x=X, cen=X[8], amp=max(Y)-min(Y))
+    result = model.fit(Y, params, x=X)
+    aic = result.aic
+    plt.scatter(X, Y, c='black')
+    plt.plot(X, result.best_fit, '--', label=mname+' AIC: '+str(np.around(aic,3)))
+    plt.xlabel('m/Z')
+    plt.ylabel('intensity(a.u.)')
+
 
 # CLASSES
 
@@ -74,24 +111,41 @@ class Sample:
         self.folder_path = folder_path
         self.output_path = output_path
         #make empty file of column length, *SHOULD ASSIGN USING ARRAY LENGTH, UNLESS ALL MALDI RUNS ARE SAME SIZE*, len(df) in pandas 
-        running_total = [0] * 107875
         run_file_list = get_txt_files(self.folder_path)
+        array_sizes = []
+        #FIX AND COMMENT THIS SECTION
+        self.unmodified = True
+        running_total = [0] * 107875
         for file in run_file_list:
-            #check if dataset file has same length and index
             filename = Title(file)
             if (str(filename.row)+str(filename.column)) in self.list:
-               running_total += np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])
+                array_sizes.append(len(np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])))
+        if all([x==array_sizes[0] for x in array_sizes]) and array_sizes:
+            running_total = [0] * int(array_sizes[0])
+            for file in run_file_list:
+                #check if dataset file has same length and index
+                filename = Title(file)
+                if (str(filename.row)+str(filename.column)) in self.list:
+                    running_total += np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])
+        else:
+            print('Array sizes not equal, list not passed')
         #check that files were found
-        self.unmodified = (running_total.all() == 0)
-        df_average = running_total/self.size
+       
+        self.unmodified = not np.any(np.asarray(running_total))
+        print('Averaging ' + self.name)
+        
+        df_average = [x/self.size for x in running_total]
         df_index = Datafile(self.folder_path+file).DataFrame['m/Z']
+        if len(df_average) != len(df_index):
+            print('Data size mismatch. Datafile ignored.')
+            return None
         df = pd.DataFrame(df_average, index=df_index)
         self.DataFrame = df
         self.average = np.asarray(df_average)
         
     def output_to_file(self):
         if self.unmodified:
-            print('No files found containing '+self.list)
+            print('No files found containing '+'-'.join(self.list))
         else:
             self.DataFrame.to_csv(r''+self.output_path+self.name+'.txt', sep='\t', index=True, header=False)
         
@@ -125,12 +179,24 @@ class Sample:
         self.y_peaks = y_peaks
         
     def infer_peak(self):
+        X = self.DataFrame.index
+        Y = self.average
         name_list = []
         for item in peak_list:
             name_list.append(item[1])
         #severly confusing data types and methods here
         indexer = [('Atlantic salmon' in name) for name in name_list]
-        print(np.asarray(peak_list)[np.asarray(indexer)])
+        salmon_peaks = np.asarray(peak_list)[np.asarray(indexer)]
+        for i in range(len(salmon_peaks)):
+            source_name = salmon_peaks[i][2]
+            source_peaks = salmon_peaks[i][0]
+            for peak in source_peaks:
+                Xn, Yn = interval(X,Y, find_nearest_dex(X, peak), 50)
+                plt.plot(Xn,Yn)
+                plt.axvline(x=peak, c='orange', label='m/Z = '+str(peak)+', source(s): '+source_name)
+                plt.legend(loc='best')
+                plt.title('Sample '+self.name+ ' Local Peaks')
+                plt.show()
         
     def peak_characterization(self):
         #data
@@ -148,14 +214,21 @@ class Sample:
         '''
         #playing around looking for individual peaks
         #major prominence around 1220.6, index= 20521
-        sample_peak = 20521
-        #num_points around peak: ~5
-        delta_s = 8
-        sample_min = sample_peak - delta_s
-        sample_max = sample_peak + delta_s
-        sample_X = X[sample_min:sample_max]
-        sample_Y = Y[sample_min:sample_max]
-        plt.scatter(sample_X, sample_Y)
+        
+        #sample_peak = 20521
+        #num_points around peak: ~5 to half max
+        #delta_s = 8
+        
+        sample_X, sample_Y = interval(X, Y, 20521, 8)
+        #recenter around maximum
+        max_index = np.argmax(sample_Y)
+        sample_X, sample_Y = interval(X,Y,20521+max_index-7, 8)
+        #reapproriated from my phy6011 lab 3 collab file
+        models = [PseudoVoigtModel(), GaussianModel(), LorentzianModel()]
+        mnames = ['PseudoVoigt', 'Gaussian', 'Lorentzian']
+        for i in range(len(models)):
+            plot_with_model(sample_X, sample_Y, models[i], mnames[i])
+        plt.legend(loc='best')
         plt.show()
         
         
@@ -169,6 +242,8 @@ class Run:
         file_list = get_txt_files(self.folder_path)
         ##check what all filenames in folder have in common
         name = os.path.commonprefix(file_list)
+        #take away parts not date (first) and cell number (last)
+        name = '_'.join(name.split(sep='_')[1:-1])
         ###assign to Run.name
         if name:
             self.name = name
@@ -177,18 +252,16 @@ class Run:
 
         #OPTION 1, use maps folder assigned earlier
         maps_path = project_path+maps_folder_name+'/'
-        identifier_csv_path = ''
+        identifier_csv_path = maps_path+'Default.csv'
         if os.path.exists(maps_path):
             #if filename matches run name
             maps = get_all_files(maps_path)
             for csv in maps:
                 #better method needed, not index based (use split and check if lists are equivalent?), removed extra underscore from end of name
-                if self.name[:-1] in csv:
+                if self.name in csv:
                   identifier_csv_path = maps_path+csv #filename, once found
                 #otherwise, use default csv map from github url
-                else:
-                  identifier_csv_path = default_csv_url
-                                  
+        print('Using sample names from '+identifier_csv_path)                          
         df = pd.read_csv(identifier_csv_path, header=None)
         #df is assumed to have the first column be cell number, second column be sample name (CAL for calibrant)
         second_column = df.iloc[:,1] 
@@ -218,7 +291,7 @@ class Run:
             files_to_use = self.master_dict.get(key)
             #export sample as txt
             #find peaks and plot
-            Sample(files_to_use, key, self.folder_path, output_path).peak_characterization()
+            Sample(files_to_use, key, self.folder_path, output_path).infer_peak()
     
                         
                 
