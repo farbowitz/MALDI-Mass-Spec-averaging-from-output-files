@@ -14,7 +14,7 @@ import os
 from scipy.signal import find_peaks
 from Mass_Spec_Compare import peak_list
 from lmfit.models import LorentzianModel, Model, GaussianModel, SplitLorentzianModel, MoffatModel, VoigtModel, PseudoVoigtModel, Pearson7Model, StudentsTModel, LinearModel
-
+from matplotlib.ticker import StrMethodFormatter
 # FUNDAMENTAL VARIABLE INPUTS
 
 project_path = "C:/Users/Daniel/Desktop/Liz_MALDI_runs/"
@@ -26,6 +26,9 @@ default_csv_url = 'https://github.com/farbowitz/MALDI-Mass-Spec-averaging-from-o
 peak_list = peak_list()
 ##define region of interest for m/Z values
 region_of_interest = [850, 3000]
+region_min = region_of_interest[0]
+region_max = region_of_interest[1]
+rolling_val = 50
 
 
 #USEFUL FUNCTIONS
@@ -73,16 +76,36 @@ def interval(dataX, dataY, center, deviation):
     newY = dataY[bottom:top]
     return newX, newY
 
-###plot using models given via lmfit.models library, e.g. GaussianModel()
-def plot_with_model(X, Y, model, mname):
-    params = model.guess(Y, x=X, cen=X[8], amp=max(Y)-min(Y))
+###plot using models given via lmfit.models library, e.g. GaussianModel(), returns AIC value
+def plot_with_model(df, model, mname):
+    #Need to change to numpy arrays to do model fitting? Not sure why
+    X = np.asarray(df.index)
+    Y = np.asarray(df.intensity)
+
+    params = model.guess(Y, x=X, cen=X[np.argmax(Y)], amp=(max(Y)-min(Y)))
     result = model.fit(Y, params, x=X)
     aic = result.aic
     plt.scatter(X, Y, c='black')
-    plt.plot(X, result.best_fit, '--', label=mname+' AIC: '+str(np.around(aic,3)))
+    #plt.plot(X, result.best_fit, '--', label=mname+' AIC: '+str(np.around(aic,3)))
     plt.xlabel('m/Z')
     plt.ylabel('intensity(a.u.)')
     #leaves out plt.plot(), intended to be looped prior to plt.plot()
+    return aic
+
+###plots given models against data and region, then returns best model     
+def peak_characterize(df, region_min=region_of_interest[0], region_max=region_of_interest[1]):
+    models = [GaussianModel()]
+    model_names = ['Gaussian']
+    aic_values = []
+    df_subset = df[df.index.to_series().between(region_min, region_max)]
+    for i in range(len(models)):
+       aic_values.append(plot_with_model(df_subset, models[i], model_names[i]))
+    plt.gca().xaxis.set_major_formatter(StrMethodFormatter('{x:,.1f}'))
+    plt.xticks(fontsize=8)
+    plt.legend(loc='lower left')
+    plt.show()
+    #returns "winning" model according to Akike Information Criteria
+    return model_names[np.argmin(np.asarray(aic_values))]
 
 ### break data into smaller sections by values rather than index
 def subset_by_x_values(dataX, dataY, bottom, top):
@@ -93,6 +116,37 @@ def subset_by_x_values(dataX, dataY, bottom, top):
     return newX, newY
 
 ### define number of intervals to break region into
+
+###using rolling average
+def df_averaging_and_cropping_with_unequal_indices(list_of_dfs, bottom_cutoff_value = region_min, top_cutoff_value=region_max, rolling_val=rolling_val):
+    df_full = pd.concat(list_of_dfs)
+    df_sorted = df_full.sort_index()
+    df_in_interval = df_sorted[df_sorted.index.to_series().between(bottom(df_sorted.index), top_cutoff_value)]
+    return df_in_interval.rolling(rolling_val).mean()
+
+
+###USE LOWEST VALUE
+def bottom(index, bottom_cutoff_value=region_min):
+    if bottom_cutoff_value > index.min():
+        return bottom_cutoff_value
+    else:
+        return index.min()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -120,7 +174,41 @@ class Datafile:
         plt.plot(self.DataFrame['m/Z'], self.DataFrame['intensity'])
         plt.xlabel('m/Z')
         plt.ylabel('Intensity (a.u.)')
+    def peak_characterization(self, region_of_interest=region_of_interest):
+            #data
+            sample_df = self.DataFrame[self.DataFrame.index.to_series().between(region_of_interest[0], region_of_interest[1])]
+            print(sample_df)
+            ##return to this if needed
+            
+            pass
+
+            '''#are step sizes all the same?
+            delta_xs = [(X[i]-X[i-1]) for i in range(1,len(X))]
+            print(delta_xs[0])
+            print(np.all(np.asarray(delta_xs)) == delta_xs[0])
+            #false, so what does delta_xs look like
+            print(delta_xs[57000:57100])
+            #not the same, but close! check:
+            print(all([(0.017<dx<0.042) for dx in delta_xs]))
+            #delta_xs appears to increase from ~0.018 to 0.041
+            '''
+            #playing around looking for individual peaks
+            #major prominence around 1220.6, index= 20521
+            
+            #sample_peak = 29965
+            #num_points around peak: ~5 to half max
+            #delta_s = 8
+            #FIX THIS FOR PD DATAFRAMES
+            #recenter around maximum
+            #max_index = np.argmax(sample_Y)
+            #sample_X, sample_Y = interval(X,Y,29965+max_index-7, 8)
+            #reapproriated from my phy6011 lab 3 collab file
+
         
+
+
+
+
         
 
 ## Creates a Sample from one or multiple datafiles
@@ -150,44 +238,46 @@ class Sample:
         else:
             print('Array sizes not equal, list not passed')'''
             
-        #TRY USING PD DATAFRAMES IN DICT {}
-        sample_dataframes = {}
+        #TRY USING PD DATAFRAMES IN LIST
+        sample_dataframes = []
         for file in run_file_list:
             #check if cell is in list_of_datafiles, SHOULD APPEND TO DICT
             filename = Title(file)
             cell_name = str(filename.row)+str(filename.column)
+            #compiles cells into 
             if cell_name in self.list:
-                sample_dataframes[cell_name] = Datafile(self.folder_path+file).DataFrame
+                #adds current cell to list
+                sample_dataframes.append(Datafile(self.folder_path+file).DataFrame)
+                #Peak characterizing for fun and profit
+                #peak_characterize(Datafile(self.folder_path+file).DataFrame, 1443, 1444)
         #check if any dfs exist in sample_dataframes
         if not sample_dataframes:
             print('No files found containing '+list_as_string)
             return None
-        #use first dataframe as reference for dataframe shape and index
-        df1_name = list(sample_dataframes.keys())[0]
-        df1 = sample_dataframes[df1_name]
-        reference_index = df1.index
-        reference_shape = df1.shape
+        #use first dataframe as reference for dataframe shape and index 
+        df1 = sample_dataframes[0]
         #compare all dataframes, check for inconsistencies
-        for cell_name in sample_dataframes:
-            dfx = sample_dataframes[cell_name]
+        for i in range(len(sample_dataframes)):
+            dfx = sample_dataframes[i]
             #check index is the same
             ##PROBLEM: MOST INDICES DON'T MATCH, THIS POSES AN ISSUE FOR AVERAGING
-            if not (reference_index.equals(dfx.index)):
+            '''if not (reference_index.equals(dfx.index)):
                 print('Indices don\'t match at '+str(cell_name))
-                return None
+                return None'''
             ###SOLUTION 1: PUT ALL DATA TOGETHER AND ROLL WITH IT
             ###SOLUTION 2:BIN DATA AND AVERAGE
             #check for same dimensions
-            if not (reference_shape == dfx.shape):
-                print('Dataframe sizes don\'t match. '+df1_name+' gives '+df1.shape+' and '+str(cell_name)+' gives '+ dfx.shape)
+            if not (df1.shape == dfx.shape):
+                print('Dataframe sizes don\'t match. '+self.list[0]+' gives '+df1.shape+' and '+self.list[i]+' gives '+ dfx.shape)
                 return None
             
         #check that files were found
         ##NOTE TO SELF: STOP SWITCHING BETWEEN LIST AND ARRAYS SO MUCH -- FIGURE OUT HOW TO BE CONSISTENT, USE PANDAS DFS?
-        print('Averaging ' + self.name)
-        df = pd.Panel(sample_dataframes).mean(axis=0)
-        print(df)
-        self.DataFrame = df
+        print('Averaging ' + self.name+' using rolling average of {} values'.format(rolling_val))
+        ####WHY ARE ALL BEGINNINGS A)THE SAME INDEX VALUES
+        self.DataFrame = df_averaging_and_cropping_with_unequal_indices(sample_dataframes)
+        ###TESTING: AUTORUN PEAK CHARACTERIZATION FOR INDIVIUDUAL DATAFILES
+        
         
     def output_to_file(self):
         if not self.DataFrame:
@@ -207,32 +297,31 @@ class Sample:
         plt.ylabel('Intensity (a.u.)')
     
     #rethink these functions, avoid replicating methods
-    def find_peaks(self):
-        X = self.DataFrame.index
-        y = self.DataFrame.intensity
+    def find_peaks(self, peak):
+        new_df = self.DataFrame[self.DataFrame.index.to_series().between(peak-1, peak+1)]
+        X = np.asarray(new_df.index)
+        y = np.asarray(new_df.intensity)
         #prominence is trough to peak tolerance for peak identification, set to a tenth of data's range
         prominence = (np.max(y)-np.min(y))/10
         #others --- height, width, tolerance
         peaks = find_peaks(y, prominence=prominence)
         peak_index = peaks[0]
 
-        plt.plot()
+        plt.scatter(X, y, c='black')
         y_peaks = [y[index] for index in peak_index]
         x_peaks = [X[index] for index in peak_index]
-        plt.scatter(x_peaks, y_peaks, c='orange')
+        plt.scatter(x_peaks, y_peaks, c='orange', marker='v')
         plt.show()
-        self.x_peaks = x_peaks
-        self.y_peaks = y_peaks
+
         
     def infer_peak(self):
-        X = self.DataFrame.index
-        Y = self.DataFrame.intensity
+
         fish_name_list = []
         for item in peak_list:
             fish_name_list.append(item[1])
         #severly confusing data types and methods here
-        fish_names = ['Atlantic salmon']
-        indexer = [(any(fish_names) == name) for name in fish_name_list]
+        fish_name = 'Atlantic salmon'
+        indexer = [(fish_name == name) for name in fish_name_list]
         salmon_peaks = np.asarray(peak_list)[np.asarray(indexer)]
         for i in range(len(salmon_peaks)):
             source_name = salmon_peaks[i][2]
@@ -247,10 +336,20 @@ class Sample:
                 plt.show()'''
                 
             #check between 850 and 3000, signal-to-noise ratio = 6
+            #individual peak plotting
+            for peak in source_peaks:
+                plt.axvline(x=peak, c='orange', label='m/Z = '+str(peak)+', source(s): '+source_name)
+                plt.title('Sample '+self.name+ ' Local Peaks')
+                #peak_characterize(self.DataFrame, peak-1, peak+1)
+                self.find_peaks(peak)
+                
+                
             
-            plt.plot(X,Y)
-            plt.vlines(source_peaks, 0, 5000, colors='orange')
-            plt.show()
+            
+            
+            #plt.plot(X,Y)
+            #plt.vlines(source_peaks, 0, 5000, colors='orange')
+            #plt.show()
         
         #should attempt looking for half max widths (either in terms of m/Z or by # of data points), check for consistency
         
@@ -288,6 +387,11 @@ class Sample:
         plt.show()
         
         
+
+
+
+
+
         
 ## Assigns each folder as a Run, should receive data about how to assign samples
 class Run:
@@ -347,9 +451,14 @@ class Run:
             files_to_use = self.master_dict.get(key)
             #export sample as txt
             #find peaks and plot
-            Sample(files_to_use, key, self.folder_path, output_path)
+            Sample(files_to_use, key, self.folder_path, output_path).infer_peak()
     
                         
+
+
+
+
+
                 
 
 ##Assigns quantities based on MALDI filename convention, more useful if sample names aren't already assigned
@@ -369,6 +478,17 @@ class Title:
             self.calibrant = True
             #Associate it with other datafiles around the calibrant?
     pass
+
+
+
+
+
+
+
+
+
+
+
 
 
 #ACTUAL PROGRAM - RUN ALL DATA IN THE ASSIGNED PROJECT FOLDER
