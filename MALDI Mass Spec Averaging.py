@@ -22,7 +22,11 @@ project_path = "C:/Users/Daniel/Desktop/Liz_MALDI_runs/"
 maps_folder_name = 'maps'
 ## default - adds folder for sample data under projet directory
 default_csv_url = 'https://github.com/farbowitz/MALDI-Mass-Spec-averaging-from-output-files/blob/main/Default%20-%20Sheet1.csv'
+##imports database of peaks as list of lists, see Mass_Spec_Compare
 peak_list = peak_list()
+##define region of interest for m/Z values
+region_of_interest = [850, 3000]
+
 
 #USEFUL FUNCTIONS
 
@@ -42,7 +46,7 @@ def get_txt_files(path):
 
 ##Might need for default sample name assignment
 
-##
+##Finds the index of a list based on closest value to given number
 def find_nearest_dex(array, number, direction=None): 
     idx = -1
     if direction is None:
@@ -60,7 +64,8 @@ def find_nearest_dex(array, number, direction=None):
             idx = _delta.get_loc(_delta_positive.min())
     return idx
 
-## get points around center
+## Graphing Functions
+###get points around center
 def interval(dataX, dataY, center, deviation):
     bottom = center-deviation
     top = center+deviation
@@ -68,7 +73,7 @@ def interval(dataX, dataY, center, deviation):
     newY = dataY[bottom:top]
     return newX, newY
 
-#plot using models given via lmfit.models library, e.g. GaussianModel()
+###plot using models given via lmfit.models library, e.g. GaussianModel()
 def plot_with_model(X, Y, model, mname):
     params = model.guess(Y, x=X, cen=X[8], amp=max(Y)-min(Y))
     result = model.fit(Y, params, x=X)
@@ -77,6 +82,20 @@ def plot_with_model(X, Y, model, mname):
     plt.plot(X, result.best_fit, '--', label=mname+' AIC: '+str(np.around(aic,3)))
     plt.xlabel('m/Z')
     plt.ylabel('intensity(a.u.)')
+    #leaves out plt.plot(), intended to be looped prior to plt.plot()
+
+### break data into smaller sections by values rather than index
+def subset_by_x_values(dataX, dataY, bottom, top):
+    bottom_index = find_nearest_dex(dataX, bottom)
+    top_index = find_nearest_dex(dataX, top)
+    newX = dataX[bottom_index:top_index]
+    newY = dataY[bottom_index:top_index]
+    return newX, newY
+
+### define number of intervals to break region into
+
+
+
 
 
 # CLASSES
@@ -87,6 +106,8 @@ class Datafile:
         #import data into pandas based on filename referenced
         df = pd.read_csv(txt_filepath, sep="\t", header=0)
         df.columns = ['m/Z', 'intensity']
+        #change m/Z column to be index
+        df.set_index('m/Z', inplace=True)
         self.DataFrame = df
         #return none if no data
             
@@ -112,40 +133,65 @@ class Sample:
         self.output_path = output_path
         #make empty file of column length, *SHOULD ASSIGN USING ARRAY LENGTH, UNLESS ALL MALDI RUNS ARE SAME SIZE*, len(df) in pandas 
         run_file_list = get_txt_files(self.folder_path)
+        #self.unmodified = True
+        #default maldi file length should be 107875
+        #running_total = [0] * 107875
+        list_as_string = '-'.join(self.list)
+        '''Commented to go easier on computer
+        #check if files making up the sample are same size
         array_sizes = []
-        #FIX AND COMMENT THIS SECTION
-        self.unmodified = True
-        running_total = [0] * 107875
         for file in run_file_list:
             filename = Title(file)
             if (str(filename.row)+str(filename.column)) in self.list:
                 array_sizes.append(len(np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])))
         if all([x==array_sizes[0] for x in array_sizes]) and array_sizes:
+            #adjust running_total list to be length of sample if not 
             running_total = [0] * int(array_sizes[0])
-            for file in run_file_list:
-                #check if dataset file has same length and index
-                filename = Title(file)
-                if (str(filename.row)+str(filename.column)) in self.list:
-                    running_total += np.asarray(Datafile(self.folder_path+file).DataFrame['intensity'])
         else:
-            print('Array sizes not equal, list not passed')
-        #check that files were found
-       
-        self.unmodified = not np.any(np.asarray(running_total))
-        print('Averaging ' + self.name)
-        
-        df_average = [x/self.size for x in running_total]
-        df_index = Datafile(self.folder_path+file).DataFrame['m/Z']
-        if len(df_average) != len(df_index):
-            print('Data size mismatch. Datafile ignored.')
+            print('Array sizes not equal, list not passed')'''
+            
+        #TRY USING PD DATAFRAMES IN DICT {}
+        sample_dataframes = {}
+        for file in run_file_list:
+            #check if cell is in list_of_datafiles, SHOULD APPEND TO DICT
+            filename = Title(file)
+            cell_name = str(filename.row)+str(filename.column)
+            if cell_name in self.list:
+                sample_dataframes[cell_name] = Datafile(self.folder_path+file).DataFrame
+        #check if any dfs exist in sample_dataframes
+        if not sample_dataframes:
+            print('No files found containing '+list_as_string)
             return None
-        df = pd.DataFrame(df_average, index=df_index)
+        #use first dataframe as reference for dataframe shape and index
+        df1_name = list(sample_dataframes.keys())[0]
+        df1 = sample_dataframes[df1_name]
+        reference_index = df1.index
+        reference_shape = df1.shape
+        #compare all dataframes, check for inconsistencies
+        for cell_name in sample_dataframes:
+            dfx = sample_dataframes[cell_name]
+            #check index is the same
+            ##PROBLEM: MOST INDICES DON'T MATCH, THIS POSES AN ISSUE FOR AVERAGING
+            if not (reference_index.equals(dfx.index)):
+                print('Indices don\'t match at '+str(cell_name))
+                return None
+            ###SOLUTION 1: PUT ALL DATA TOGETHER AND ROLL WITH IT
+            ###SOLUTION 2:BIN DATA AND AVERAGE
+            #check for same dimensions
+            if not (reference_shape == dfx.shape):
+                print('Dataframe sizes don\'t match. '+df1_name+' gives '+df1.shape+' and '+str(cell_name)+' gives '+ dfx.shape)
+                return None
+            
+        #check that files were found
+        ##NOTE TO SELF: STOP SWITCHING BETWEEN LIST AND ARRAYS SO MUCH -- FIGURE OUT HOW TO BE CONSISTENT, USE PANDAS DFS?
+        print('Averaging ' + self.name)
+        df = pd.Panel(sample_dataframes).mean(axis=0)
+        print(df)
         self.DataFrame = df
-        self.average = np.asarray(df_average)
         
     def output_to_file(self):
-        if self.unmodified:
-            print('No files found containing '+'-'.join(self.list))
+        if not self.DataFrame:
+            return None
         else:
             self.DataFrame.to_csv(r''+self.output_path+self.name+'.txt', sep='\t', index=True, header=False)
         
@@ -163,7 +209,7 @@ class Sample:
     #rethink these functions, avoid replicating methods
     def find_peaks(self):
         X = self.DataFrame.index
-        y = self.average
+        y = self.DataFrame.intensity
         #prominence is trough to peak tolerance for peak identification, set to a tenth of data's range
         prominence = (np.max(y)-np.min(y))/10
         #others --- height, width, tolerance
@@ -180,28 +226,38 @@ class Sample:
         
     def infer_peak(self):
         X = self.DataFrame.index
-        Y = self.average
-        name_list = []
+        Y = self.DataFrame.intensity
+        fish_name_list = []
         for item in peak_list:
-            name_list.append(item[1])
+            fish_name_list.append(item[1])
         #severly confusing data types and methods here
-        indexer = [('Atlantic salmon' in name) for name in name_list]
+        fish_names = ['Atlantic salmon']
+        indexer = [(any(fish_names) == name) for name in fish_name_list]
         salmon_peaks = np.asarray(peak_list)[np.asarray(indexer)]
         for i in range(len(salmon_peaks)):
             source_name = salmon_peaks[i][2]
             source_peaks = salmon_peaks[i][0]
+            ''' # Looks at each individual peak
             for peak in source_peaks:
-                Xn, Yn = interval(X,Y, find_nearest_dex(X, peak), 50)
+                Xn, Yn = interval(X,Y, find_nearest_dex(X, peak), 100)
                 plt.plot(Xn,Yn)
                 plt.axvline(x=peak, c='orange', label='m/Z = '+str(peak)+', source(s): '+source_name)
                 plt.legend(loc='best')
                 plt.title('Sample '+self.name+ ' Local Peaks')
-                plt.show()
+                plt.show()'''
+                
+            #check between 850 and 3000, signal-to-noise ratio = 6
+            
+            plt.plot(X,Y)
+            plt.vlines(source_peaks, 0, 5000, colors='orange')
+            plt.show()
+        
+        #should attempt looking for half max widths (either in terms of m/Z or by # of data points), check for consistency
         
     def peak_characterization(self):
         #data
         X = self.DataFrame.index
-        Y = self.average
+        Y = self.DataFrame.intensity
         '''#are step sizes all the same?
         delta_xs = [(X[i]-X[i-1]) for i in range(1,len(X))]
         print(delta_xs[0])
@@ -291,7 +347,7 @@ class Run:
             files_to_use = self.master_dict.get(key)
             #export sample as txt
             #find peaks and plot
-            Sample(files_to_use, key, self.folder_path, output_path).infer_peak()
+            Sample(files_to_use, key, self.folder_path, output_path)
     
                         
                 
