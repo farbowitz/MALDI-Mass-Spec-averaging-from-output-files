@@ -28,7 +28,7 @@ peak_list = peak_list()
 region_of_interest = [850, 3000]
 region_min = region_of_interest[0]
 region_max = region_of_interest[1]
-rolling_val = 50
+rolling_val = 3
 
 
 #USEFUL FUNCTIONS
@@ -131,7 +131,17 @@ def bottom(index, bottom_cutoff_value=region_min):
         return bottom_cutoff_value
     else:
         return index.min()
-
+    
+###Used to limit plots to grouping the closest to square
+def squarest_dims(number):
+    #find nearest square larger than number
+    root = np.ceil(np.sqrt(number))
+    #can it fit into n by (n-1) dimensions?
+    if number < ((root-1)*root):
+        return (root-1), root
+    else:
+        return root, root
+    
 
 
 
@@ -297,7 +307,8 @@ class Sample:
         plt.ylabel('Intensity (a.u.)')
     
     #rethink these functions, avoid replicating methods
-    def find_peaks(self, peak):
+    def find_peak(self, peak, index_x, index_y, axes):
+        #zoom into peak
         new_df = self.DataFrame[self.DataFrame.index.to_series().between(peak-1, peak+1)]
         X = np.asarray(new_df.index)
         y = np.asarray(new_df.intensity)
@@ -305,17 +316,21 @@ class Sample:
         prominence = (np.max(y)-np.min(y))/10
         #others --- height, width, tolerance
         peaks = find_peaks(y, prominence=prominence)
+        ##**NEED TO LABEL PEAK VALUES
+        
+        
         peak_index = peaks[0]
 
-        plt.scatter(X, y, c='black')
+        axes[index_x,index_y].scatter(X, y, c='black')
         y_peaks = [y[index] for index in peak_index]
         x_peaks = [X[index] for index in peak_index]
-        plt.scatter(x_peaks, y_peaks, c='orange', marker='v')
-        plt.show()
+        axes[index_x, index_y].scatter(x_peaks, y_peaks, c='orange', marker='v')
+        #add in peak value labels
+        #for i in range(len(y_peaks)):
+            #axes[index_x, index_y].annotate(str(round(x_peaks[i], 1)), (x_peaks[i], y_peaks[i]), xytext= (-0.2, 10), textcoords='offset points', fontsize=8)
 
         
-    def infer_peak(self):
-
+    def infer_peaks(self):
         fish_name_list = []
         for item in peak_list:
             fish_name_list.append(item[1])
@@ -323,9 +338,17 @@ class Sample:
         fish_name = 'Atlantic salmon'
         indexer = [(fish_name == name) for name in fish_name_list]
         salmon_peaks = np.asarray(peak_list)[np.asarray(indexer)]
+        plt.style.use('seaborn')
         for i in range(len(salmon_peaks)):
             source_name = salmon_peaks[i][2]
             source_peaks = salmon_peaks[i][0]
+            #set up graph properties for each source
+            if 'Harvey' in source_name:
+                c='red'
+                linestyle='--'
+            elif 'Buckley' in source_name:
+                c='brown'
+                linestyle='dotted'
             ''' # Looks at each individual peak
             for peak in source_peaks:
                 Xn, Yn = interval(X,Y, find_nearest_dex(X, peak), 100)
@@ -334,23 +357,43 @@ class Sample:
                 plt.legend(loc='best')
                 plt.title('Sample '+self.name+ ' Local Peaks')
                 plt.show()'''
-                
+            n_of_graphs = len(source_peaks)
+            nrows, ncols = squarest_dims(n_of_graphs)
+            
+            fig, axes = plt.subplots(nrows=int(nrows), ncols=int(ncols), sharey=True)
+            
+            
             #check between 850 and 3000, signal-to-noise ratio = 6
             #individual peak plotting
+            
             for peak in source_peaks:
-                plt.axvline(x=peak, c='orange', label='m/Z = '+str(peak)+', source(s): '+source_name)
-                plt.title('Sample '+self.name+ ' Local Peaks')
+                idx = source_peaks.index(peak)
+                index_x = int(np.floor(idx/ncols))
+                index_y = int(idx % ncols)
+                
+                axes[index_x,index_y].axvline(x=peak, c=c, label='m/Z = '+str(peak)+', source(s): '+source_name, linestyle=linestyle)
                 #peak_characterize(self.DataFrame, peak-1, peak+1)
-                self.find_peaks(peak)
+                self.find_peak(peak, index_x, index_y, axes)
+            
+            fig.suptitle(self.name + ' ' + fish_name + ' Markers         ( $\it{Source:}$ '+source_name+')')
+            fig.supxlabel('m/Z')
+            fig.supylabel('intensity')
+            plt.tight_layout()
+            plt.show()
                 
                 
+            '''
             
-            
-            
-            #plt.plot(X,Y)
-            #plt.vlines(source_peaks, 0, 5000, colors='orange')
-            #plt.show()
-        
+            #run all peaks together
+            X = self.DataFrame.index
+            Y = self.DataFrame.intensity
+            plt.scatter(X,Y, c='black')
+            plt.vlines(source_peaks, 0, Y.max(), colors=[c], linestyles=[linestyle])
+            plt.xlabel('m/Z')
+            plt.ylabel('intensity')
+            plt.title(self.name + ' ' + fish_name + ' Markers         ( $\it{Source:}$ '+source_name+')')
+            plt.show()
+            '''
         #should attempt looking for half max widths (either in terms of m/Z or by # of data points), check for consistency
         
     def peak_characterization(self):
@@ -451,7 +494,7 @@ class Run:
             files_to_use = self.master_dict.get(key)
             #export sample as txt
             #find peaks and plot
-            Sample(files_to_use, key, self.folder_path, output_path).infer_peak()
+            Sample(files_to_use, key, self.folder_path, output_path).infer_peaks()
     
                         
 
