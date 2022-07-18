@@ -17,7 +17,7 @@ from lmfit.models import LorentzianModel, Model, GaussianModel, SplitLorentzianM
 from matplotlib.ticker import StrMethodFormatter
 # FUNDAMENTAL VARIABLE INPUTS
 
-project_path = "C:/Users/Daniel/Desktop/Liz_MALDI_runs/"
+project_path = "C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Liz_MALDI_runs/"
 ## OPTIONAL- SAMPLE NAMING METHOD: assign a folder to keep CSV files (titled with the run name) which map column 1 wells (e.g. A1, B3, etc.) to sample names (e.g. sample 2, coppergate_fish). Use CAL for calibrant wells. 
 maps_folder_name = 'maps'
 ## default - adds folder for sample data under projet directory
@@ -49,7 +49,7 @@ def get_txt_files(path):
 
 ##Might need for default sample name assignment
 
-##Finds the index of a list based on closest value to given number
+##Finds the index of a <Pandas index> based on closest value to given number
 def find_nearest_dex(array, number, direction=None): 
     idx = -1
     if direction is None:
@@ -142,7 +142,45 @@ def squarest_dims(number):
     else:
         return root, root
     
+def get_map(path):
+    #bring up all filenames in folder
+    file_list = get_txt_files(path)
+    ##check what all filenames in folder have in common
+    name = os.path.commonprefix(file_list)
+    #take away parts not date (first) and cell number (last)
+    name = '_'.join(name.split(sep='_')[1:-1])
+    ###assign to Run.name
 
+    #OPTION 1, use maps folder assigned earlier
+    maps_path = project_path+maps_folder_name+'/'
+    identifier_csv_path = maps_path+'Default.csv'
+    if os.path.exists(maps_path):
+        #if filename matches run name
+        maps = get_all_files(maps_path)
+        for csv in maps:
+            #better method needed, not index based (use split and check if lists are equivalent?), removed extra underscore from end of name
+            if name in csv:
+              identifier_csv_path = maps_path+csv #filename, once found
+            #otherwise, use default csv map from github url
+    print('Using sample names from '+identifier_csv_path)                          
+    df = pd.read_csv(identifier_csv_path, header=None)
+    #df is assumed to have the first column be cell number, second column be sample name (CAL for calibrant)
+    second_column = df.iloc[:,1] 
+    filenames_to_create = list(set(second_column))
+    #remove nan values, ignore CAL
+    filenames_to_create = [x for x in filenames_to_create if (str(x)!='nan' and str(x)!='CAL') ]
+    
+
+    master_list = []
+    #rethink how to structure the data --- TRY TO MAKE DICT IN RUNS AND PASS IN LIST OF RUNS TO SAMPLE
+    for suffix in filenames_to_create:
+        new_list = []
+        for i in range(len(second_column)):
+            if second_column[i] == suffix:
+                new_list.append(str(df.iloc[i,0]))
+        master_list.append(new_list)
+    master_dict = dict(zip(filenames_to_create, master_list))
+    return master_dict
 
 
 
@@ -173,8 +211,10 @@ class Datafile:
         #change m/Z column to be index
         df.set_index('m/Z', inplace=True)
         self.DataFrame = df
-        #return none if no data
-            
+        self.filepath = txt_filepath
+    #return none if no data
+
+
     def identify_peaks(self):
         return None
     def clean_noise(self):
@@ -184,6 +224,82 @@ class Datafile:
         plt.plot(self.DataFrame['m/Z'], self.DataFrame['intensity'])
         plt.xlabel('m/Z')
         plt.ylabel('Intensity (a.u.)')
+
+    #Normalize intensity relative to known markers ()
+    tripsin_marker = 2211.0
+    def normalize(self, marker = tripsin_marker):
+        df = self.DataFrame
+        #Check around tripsin marker
+        n = find_nearest_dex(df.index, marker)
+        #isolate region around peak (10 points both ways)
+        df_near_peak = df.iloc[n-10:n+11]
+
+        #assume maximum is max value
+        max_value = df_near_peak.max()
+
+
+        #print to double-check
+        plt.plot(df_near_peak)
+        plt.axvline(marker)
+        plt.xlabel('m/Z')
+        plt.ylabel('Intensity (a.u.)')
+        plt.show()
+        #normalize dataset so marker intentsity = 1 
+        df['intensity'] = df['intensity'].div(int(max_value))
+        self.DataFrame = df
+        return df
+
+    def output_to_file(self):
+        if self.DataFrame.empty:
+            return None
+        else:
+            folder_list = self.filepath.split(sep='/')
+            containing_folder = '/'.join(folder_list[:-1])
+            
+            #Use parent directory to get relevant map from maps folder
+            run_dict = get_map(containing_folder)
+            
+            
+            #Make new folder for outputs, if not already existing
+            output_path = containing_folder+'/Renamed_files/'
+            if not os.path.exists(output_path):
+                os.makedirs(output_path)
+          
+            
+            #remove .txt ending
+            original_name = folder_list[-1].split(sep='.')[0]
+            #get cell number
+            original_cell = original_name.split(sep='_')[-1]
+            #invert dict ugh
+            inv_dict = {}
+            for k, v in run_dict.items():
+                for i in v:
+                    inv_dict.setdefault(i, k)
+            #check if cell number is in map and apply it
+            if original_cell in inv_dict.keys():
+                suffixes = list('ABCDEFGHIJKLMNOP')
+                #gets all txt files in the folder
+                files_in_folder = get_txt_files(output_path)
+                #checks how many have the same name
+                of_name = []
+                sample_name = inv_dict.get(original_cell)
+                for file in files_in_folder:
+                    if sample_name in file.replace('.txt', '').split(sep='_'):
+                        of_name.append(file)
+                print(of_name)
+                suffix = suffixes[len(of_name)]
+                print(suffix)
+                
+                self.DataFrame.to_csv(r''+output_path+sample_name+'_'+suffix+'.txt', sep='\t', index=True, header=False)
+            else:
+                print ('Cannot find cell '+original_cell+'!' )
+            return self.DataFrame
+            
+            
+            #infer name from map
+            
+
+
     def peak_characterization(self, region_of_interest=region_of_interest):
             #data
             sample_df = self.DataFrame[self.DataFrame.index.to_series().between(region_of_interest[0], region_of_interest[1])]
@@ -257,7 +373,7 @@ class Sample:
             #compiles cells into 
             if cell_name in self.list:
                 #adds current cell to list
-                sample_dataframes.append(Datafile(self.folder_path+file).DataFrame)
+                sample_dataframes.append(Datafile(self.folder_path+file).normalize())
                 #Peak characterizing for fun and profit
                 #peak_characterize(Datafile(self.folder_path+file).DataFrame, 1443, 1444)
         #check if any dfs exist in sample_dataframes
@@ -274,13 +390,16 @@ class Sample:
             '''if not (reference_index.equals(dfx.index)):
                 print('Indices don\'t match at '+str(cell_name))
                 return None'''
+            ##TEST:graph normalized data together
+            dfx.plot()
             ###SOLUTION 1: PUT ALL DATA TOGETHER AND ROLL WITH IT
             ###SOLUTION 2:BIN DATA AND AVERAGE
+            ###SOLUTION 3: COMPARE DATA TO ITSELF -- GROUP DATA USING KNN OR SIMILAR ALGORITHM
             #check for same dimensions
             if not (df1.shape == dfx.shape):
                 print('Dataframe sizes don\'t match. '+self.list[0]+' gives '+df1.shape+' and '+self.list[i]+' gives '+ dfx.shape)
                 return None
-            
+        plt.show() 
         #check that files were found
         ##NOTE TO SELF: STOP SWITCHING BETWEEN LIST AND ARRAYS SO MUCH -- FIGURE OUT HOW TO BE CONSISTENT, USE PANDAS DFS?
         print('Averaging ' + self.name+' using rolling average of {} values'.format(rolling_val))
@@ -332,23 +451,28 @@ class Sample:
         
     def infer_peaks(self):
         fish_name_list = []
+        ##**JOIN ALL ITEMS TOGETHER PER FISH, 'Brown trout' also goes by 'Brown trout/river trout'
         for item in peak_list:
             fish_name_list.append(item[1])
         #severly confusing data types and methods here
         fish_name = 'Atlantic salmon'
+        fish_names = ['Brown trout']
+        names_matching = [s for s in fish_name_list if any(xs in s for xs in fish_names)]
+        indices= [[name == x for x in fish_name_list] for name in names_matching]
+        trout_data = []
+        for i in range(len(indices)):
+            trout_data.append(np.asarray(fish_name_list)[np.asarray(indices[i])])
+        print(trout_data)
         indexer = [(fish_name == name) for name in fish_name_list]
-        salmon_peaks = np.asarray(peak_list)[np.asarray(indexer)]
+        salmon_data = np.asarray(peak_list)[np.asarray(indexer)]
+        salmon_peaks=[]
+        for i in range(len(salmon_data)):
+            salmon_peaks.extend(salmon_data[i][0])
         plt.style.use('seaborn')
         for i in range(len(salmon_peaks)):
-            source_name = salmon_peaks[i][2]
             source_peaks = salmon_peaks[i][0]
             #set up graph properties for each source
-            if 'Harvey' in source_name:
-                c='red'
-                linestyle='--'
-            elif 'Buckley' in source_name:
-                c='brown'
-                linestyle='dotted'
+
             ''' # Looks at each individual peak
             for peak in source_peaks:
                 Xn, Yn = interval(X,Y, find_nearest_dex(X, peak), 100)
@@ -357,6 +481,8 @@ class Sample:
                 plt.legend(loc='best')
                 plt.title('Sample '+self.name+ ' Local Peaks')
                 plt.show()'''
+            
+            '''
             n_of_graphs = len(source_peaks)
             nrows, ncols = squarest_dims(n_of_graphs)
             
@@ -387,13 +513,13 @@ class Sample:
             #run all peaks together
             X = self.DataFrame.index
             Y = self.DataFrame.intensity
-            plt.scatter(X,Y, c='black')
+            plt.plot(X,Y)
             plt.vlines(source_peaks, 0, Y.max(), colors=[c], linestyles=[linestyle])
             plt.xlabel('m/Z')
             plt.ylabel('intensity')
             plt.title(self.name + ' ' + fish_name + ' Markers         ( $\it{Source:}$ '+source_name+')')
             plt.show()
-            '''
+            
         #should attempt looking for half max widths (either in terms of m/Z or by # of data points), check for consistency
         
     def peak_characterization(self):
@@ -494,7 +620,7 @@ class Run:
             files_to_use = self.master_dict.get(key)
             #export sample as txt
             #find peaks and plot
-            Sample(files_to_use, key, self.folder_path, output_path).infer_peaks()
+            Sample(files_to_use, key, self.folder_path, output_path)
     
                         
 
