@@ -16,23 +16,32 @@ from scipy.signal import argrelmax
 import logging
 import sys
 
+from Datafile import Datafile
+
 logger = logging.getLogger(__name__)
 stream_handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(stream_handler)
 
 # FUNDAMENTAL VARIABLE INPUTS
 known_peaks_path="C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Mass_spec_peaks_fish.csv"
-project_path = "C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Liz_MALDI_runs/"
+project_path = "C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Usable Spectra July 2022/"
 ## OPTIONAL- SAMPLE NAMING METHOD: assign a folder to keep CSV files (titled with the run name) which map column 1 wells (e.g. A1, B3, etc.) to sample names (e.g. sample 2, coppergate_fish). Use CAL for calibrant wells. 
 maps_folder_name = 'maps'
 ## default - adds folder for sample data under projet directory
 
 ###TEST DATA
-test_folder = project_path+'20220429_Coppergate_1 Text Files/'
-test_filename = '20220429_Coppergate_1_A8.txt'
-test_path = test_folder+test_filename
+test_folder = project_path+'20220711_LMQ_Test Text Files/'
+test_file = '20220711_LMQ_Test_300622_A3.txt'
+test_path = test_folder+test_file
+
 
 #USEFUL FUNCTIONS
+
+def char_range(c1, c2):
+    """Generates the characters from `c1` to `c2`, inclusive."""
+    for c in range(ord(c1), ord(c2)+1):
+        yield chr(c)
+
 
 def get_all_files(path):
     file_list = []
@@ -48,150 +57,83 @@ def get_txt_files(path):
             file_list.append(element)
     return file_list
 
+def get_map_pd(folder=test_folder):
+    map_folder = project_path+maps_folder_name+'/'
+    if os.path.exists(map_folder):
+        #if filename matches run name
+        maps = get_all_files(map_folder)
+        for map in maps:
+            #better method needed, not index based (use split and check if lists are equivalent?), removed extra underscore from end of name
+            if 'LMQ_Test' in map:
+                map_path = map_folder+map #filename, once found
+        
+            
+        logger.warning('No map found containing {} in {}.'.format(maps_folder_name, 'LMQ_test'))
+            
+    else:
+        logger.warning('No maps folder found. Creating one at {}'.format(map_folder))
+        #create folder
+        #add default.csv file to it
+        map_path=None
+    df = pd.read_csv(map_path, names=['cell id', 'sample id'], header=None)
+    #df is assumed to have the first column be cell number, second column be sample name (CAL for calibrant)
+    df = df.dropna()
+    #remove nan values, ignore 
+
+    return df
+
+#not working
+def batch_convert(folder=test_folder):
+    file_list = get_txt_files(folder)
+    df = get_map_pd()
+
+    #create Renamed_files in folder
+    directory = test_folder+'Renamed_Files/'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    for file in file_list:
+        name = file.replace('.txt', '')
+        cell_name = name.split(sep='_')[-1]
+
+        sample_name = df.loc[df['cell id']==cell_name, 'sample id'].item()
+        new_name = name.replace(cell_name, sample_name)
+        chars = ['A', 'B', 'C', 'D', 'E', 'F']
+        for index in range(len(chars)):
+            try_name = new_name + '_' + chars[index] + '.txt'
+            if not os.path.exists(directory+new_name):
+                new_name = try_name
+                break
+            print(folder+file)
+            print(directory+new_name)
+            with open(folder+file,'r') as firstfile, open(directory+new_name,'w') as secondfile:
+                # read content from first file
+                for line in firstfile:
+                    print(line)
+                    # append content to second file
+                    secondfile.write(line)
+                secondfile.close()
+                firstfile.close()
+
+#LOAD CSV file with known peaks for comparison
+def load_known_peaks(self, known_peaks_path="C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Mass_spec_peaks_fish.csv"):
+    df = pd.read_csv(known_peaks_path, header=10)
+    df_vals = df[df.columns[4:-2]]
+    df_meta = df[df.columns[[0,1,2,3,-2,-1]]]
+
+    #indices should match between list and df_meta to correctly assign fish names
+    list_of_known_peaks = [np.asarray(df_vals.loc[i].dropna()) for i in range(len(df_vals))]
+    return list_of_known_peaks, df_meta
+
+
+
+
+
+
+
 # CLASSES
 
-## individual txt files from each run are a datafile
-#Which direction should inheritance run
-class Datafile:
-    def __init__(self, txt_filepath):
-        #import data into pandas based on filename referenced
-        self.filepath = txt_filepath
-
-        df = pd.read_csv(txt_filepath, sep="\t", header=0)
-        df.columns = ['m/Z', 'intensity']
-        self.DataFrame = self.clip_data(df)
-        #return none if no data
-        if not any(self.DataFrame):
-            logger.debug('No data available in dataframe.')
-        self.props_from_filepath()
-
-        self.DataFrame
 
 
-
-    #PROVIDES RUN_NAME, CELL, SAMPLE_ID    
-    def props_from_filepath(self):
-        path_split = self.filepath.split(sep='/')
-        run_folder = path_split[-2]
-        filename = path_split[-1]
-        self.run_name = os.path.commonprefix([run_folder, filename])
-        #need to remove initial date
-        self.run_name = '_'.join(self.run_name.split(sep='_')[1:])
-        if not self.run_name:
-            logger.warning('No common name between file and folder. Check {}'.format(run_folder))
-        filename = filename.removesuffix('.txt')
-        file_comps =filename.split(sep='_')
-        self.date = file_comps[0]
-        self.cell = file_comps[-1]
-        #check cell matches format with regex?
-        self.sample_id = self.get_sample_id()
-        logger.info('Creating Dataframe for cell {} (sample {}) in {}'.format(self.cell, self.sample_id, self.run_name))
-
-    def locate_run_map(self, folder=maps_folder_name):
-        map_folder = project_path+folder+'/'
-        if os.path.exists(map_folder):
-            #if filename matches run name
-            maps = get_all_files(map_folder)
-            for map in maps:
-                #better method needed, not index based (use split and check if lists are equivalent?), removed extra underscore from end of name
-                if self.run_name in map:
-                  map_path = map_folder+map #filename, once found
-            try:
-                return map_path
-            except:
-                logger.warning('No map found containing {} in {}.'.format(self.run_name, ))
-            
-        else:
-            logger.warning('No maps folder found. Creating one at {}'.format(map_folder))
-            #create folder
-            #add default.csv file to it
-            map_path=None
-        return map_path
-
-    def import_run_map(self, folder=maps_folder_name):
-        map_path = self.locate_run_map()
-        df = pd.read_csv(map_path, names=['cell id', 'sample id'], header=None)
-        #df is assumed to have the first column be cell number, second column be sample name (CAL for calibrant)
-        df = df.dropna()
-        df = df.drop(df[df['sample id'] == 'CAL'].index)
-        #remove nan values, ignore CAL
-        return df
-
-    def get_sample_id(self):
-        #load pandas dataframe associated with this run
-        df = self.import_run_map()
-        #use .item() in pandas to return single object as original datatype rather than pandas object
-        sample_id = df.loc[df['cell id']==self.cell, 'sample id'].item()
-        return str(sample_id)
-
-    #DATA RELATED FUNCTIONS
-    #select region of interest, for now default is (850, 3000)
-    def clip_data(self, df, min=850, max=3000):
-        clipped_df = df[df['m/Z'].between(min, max)]
-        return clipped_df
-
-    def normalize(self):
-        pass
-
-    ##PEAK FINDING
-    
-    def identify_peaks(self):
-        return None
-
-    def peak_coords(self):
-        df = self.DataFrame
-        #need numpy array to use argrelmax?
-        y = np.asarray( df['intensity'])
-        x = np.asarray( df['m/Z'])
-
-        #prominence value based on max for time used, or over whole dataset?
-        int_max = y.max() 
-        #peaks, other = scipy.signal.find_peaks(y, prominence=0.05*df_max)
-        #alternatively, use argrelextrema?
-        n=200
-        indices = argrelmax(y, order=n)
-        x_peaks = x[indices]
-        y_peaks = y[indices]
-        return x_peaks, y_peaks
-
-    def plot_peaks(self):
-        x_peaks, y_peaks = self.peak_coords()
-        #may want to get use out of x_peaks info
-        plt.plot(x_peaks, y_peaks, 'xb')
-        #add in labels?
-        
-        for peak in x_peaks:
-            plt.annotate(round(peak), xy=(peak, y_peaks[np.where(x_peaks == peak)]))
-        #plt.vlines(x_peaks, ymin=0, ymax=y_peaks)
-        self.plot()
-
-    def list_peaks(self):
-        x_peaks, y_peaks = self.peak_coords()
-        print(x_peaks)
-        return None
-
-    def get_peak_list(self):
-        x_peaks, y_peaks = self.peak_coords()
-        return x_peaks
-    
-    def clean_noise(self):
-        return None
-    #internal function to plot data, without_show exists for comparative purposes
-    def plot_without_show(self):
-        plt.plot(self.DataFrame['m/Z'], self.DataFrame['intensity'])
-        plt.xlabel('m/Z')
-        plt.ylabel('Intensity (a.u.)')
-    
-    def plot(self):
-        self.plot_without_show()
-        plt.show()
-
-
-#test code for datafile class
-#test_path=test_path.replace('A2', 'C2')
-obj = Datafile(test_path)
-print(obj.cell)
-obj.plot_peaks()
 
 #New class for peak lists?
 
@@ -234,21 +176,21 @@ def list_similarity_metric(list_a, list_b):
     mtr = 1-(sq_diff/((len(list_a)-unique_elements)*4))
     print('The first list has {} percent unique elements, similar elements have a metric of {}'.format(pct_unique,mtr))
 
-def list_similarity_operation(list1, list2):
+def list_similarity_operation(list1, list2, allowable_distance=1):
     match_list = []
-    new_list1 = []
+    non_matches1 = []
     if len(list1) ==0 or len(list2) == 0:
         print('No peaks to form comparison from. :(')
         return None, None, None
     for x_value in list1:
-        if find_nearest(list2, x_value, None) < 1:
+        if find_nearest(list2, x_value, None) < allowable_distance:
             index1 = np.where(list1 == x_value)[0]
             index2 = find_nearest_index(list2, x_value)
-            match_list.append((float(list1[index1])))#, float(list2[index2])))
-            list2 = np.delete(list2, index2)
+            match_list.append(np.around(float(list1[index1]),2))#, float(list2[index2])))
+            non_matches2 = np.delete(list2, index2)
         else:
-            new_list1.append(x_value)
-    return match_list, new_list1, list2
+            non_matches1.append(x_value)
+    return match_list, non_matches1, non_matches2
 
 
 
@@ -404,7 +346,9 @@ class Title:
 
 '''
 
+#ATTEMPT ONE: LIZ THINKS I CAN JUST DO ANYTHING
 
+#test_run = Run(folder_path = project_path+'30062022_LMQ_Test Text Files/')
 
 ##Might need for default sample name assignment
 '''
@@ -447,34 +391,16 @@ def sample_list(grouping_file_path = None):
 
 sample_list(grouping_file_path)
 '''
-'''
+
 #FULL IMPLEMENTATION HERE FOR NOW!!!!********
-#LOAD CSV file with known peaks for comparison
-df = pd.read_csv(known_peaks_path, header=10)
-df_vals = df[df.columns[4:-2]]
-df_meta = df[df.columns[[0,1,2,3,-2,-1]]]
-print(df_meta)
-#indices should match between list and df_meta to correctly assign fish names
-list_of_known_peaks = [np.asarray(df_vals.loc[i].dropna()) for i in range(len(df_vals))]
-
-##get all folders in project directory            
-folder_list = [ f.path for f in os.scandir(project_path) if f.is_dir() ]
-##ignore mapping folder
-###NOTE TO SELF: SHOULD CHECK IF IT EXISTS FIRST
-folder_list.remove(project_path+maps_folder_name)
-
-##Each folder should represent a single run, with text files for each well in the plate 
-for run_folder in folder_list:
-    #Performs averages and ouputs to file (see get_data function in Run class)
-    for datafile in get_txt_files(run_folder):
-        obj = Datafile(run_folder+'/'+datafile)
+#keep as outside function or class function?
+def print_species_matches_from_datafile(path):
+        obj = Datafile(path)
         file_peaks = obj.get_peak_list()
-        print('Run: {}    Cell: {}    Sample: {} \n'.format(obj.run_name, obj.cell, obj.sample_id))
+        print('Sample: {}'.format(obj.sample_id))
+        list_of_matches, match_lengths, df_meta = obj.list_matches_to_fish_data(file_peaks)
         #list the length of each matches list to align indices
-        match_lengths =[]
-        for known_peaks in list_of_known_peaks:
-            matches, remainder1, remainder2 = list_similarity_operation(file_peaks, known_peaks)
-            match_lengths.append(len(matches))
+
         #assuming this puts indices in reverse order of highest
         indices = np.argpartition(match_lengths, -3)[-3:]
         print('Highest number of peak matches:')
@@ -482,14 +408,85 @@ for run_folder in folder_list:
             top_val = 3-np.where(indices==index)[0]
             top_spec = df_meta.loc[index]['Species']
             top_len = match_lengths[index]
-            print('#{}: {}, {} matches'.format(top_val, top_spec, top_len))
-        print('Datafile analysis complete. \n')
+            print('#{}: {}, {} matches @ {}'.format(top_val, top_spec, top_len, list_of_matches[index]))
+        print('\n')
+        logger.info('Datafile analysis complete. \n')
+
+
+def comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks):
+    minimum = 0.25
+    #adjust peak list 
+    x1_peaks_major = x1_peaks[np.where(y1_peaks > minimum)]
+    y1_peaks_major = y1_peaks[np.where(y1_peaks > minimum)]
+    x2_peaks_major = x2_peaks[np.where(y2_peaks > minimum)]
+    y2_peaks_major = y2_peaks[np.where(y2_peaks > minimum)]
+    for peak in x1_peaks_major:
+        index1 = np.where(x1_peaks_major == peak)
+        index2 = find_nearest_index(x2_peaks_major, peak)
+        x1 = x1_peaks_major[index1]
+        x2 = x2_peaks_major[index2]
+        y1 = y1_peaks_major[index1]
+        y2 = y2_peaks_major[index2]
+        #print('y2: {} y1: {}   x2: {}  x1:{}'.format(y2,y1,x2,x1))
+        print('y_distance: {}    x_distance: {}'.format(np.abs(y2-y1), np.abs(x2-x1)))
+        #euclidean_distance = np.sqrt((x2-x1)**2+(y2-y1)**2)
+        #np.append(distances, euclidean_distance)
+    #return distances
+
+def full_comparison(obj1, obj2):
+    name1 = obj1.sample_id
+    name2 = obj2.sample_id
+    x1_peaks, y1_peaks = obj1.peak_coords()
+    x2_peaks, y2_peaks = obj2.peak_coords()
+    print('Comaprison between {} and {}:'.format(name1,name2))
+    obj1.plot_peaks()
+    obj2.plot_peaks()
+    print(comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks))
+
+#test code for datafile class
+test_path = 'C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Usable Spectra July 2022/C04_A.txt'
+obj1 = Datafile(test_path)
+test_path=test_path.replace('C04_A', 'C08_C')
+obj2 = Datafile(test_path)
+
+obj1.plot_peaks()
+obj2.plot_peaks()
+x1_peaks, y1_peaks = obj1.peak_coords()
+x2_peaks, y2_peaks = obj2.peak_coords()
+comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks)
+
+
+
+    
+
+'''
+##get all folders in project directory            
+folder_list = [ f.path for f in os.scandir(project_path) if f.is_dir() ]
+##ignore mapping folder
+###NOTE TO SELF: SHOULD CHECK IF IT EXISTS FIRST
+folder_list.remove(project_path+maps_folder_name)
+
+
+##Each folder should represent a single run, with text files for each well in the plate 
+for run_folder in folder_list:
+'''  
+'''
+#Performs averages and ouputs to file (see get_data function in Run class)
+for datafile1 in get_txt_files(project_path):
+    for datafile2 in get_txt_files(project_path):
+        obj1 = Datafile(project_path+'/'+datafile1)
+        obj2 = Datafile(project_path+'/'+datafile2)
+
+        full_comparison(obj1, obj2)
+        
+'''      
+       
         
     
 ##If completed with no errors, acknowledge    
 print('Project averaging completed from '+project_path)
 
-'''
+
 #PROGRAM OUTLINE - PERSONAL USE
 
 ##access folder as a run
