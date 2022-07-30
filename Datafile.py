@@ -10,7 +10,9 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import scipy
 from scipy.signal import argrelmax
+from scipy.ndimage import gaussian_filter
 
 #ATTEMPTING LOGGING
 import logging
@@ -91,7 +93,7 @@ class Datafile:
             logger.debug('No data available in dataframe.')
         self.props_from_filepath()
 
-        self.DataFrame
+        #self.noise_filter()
 
 
 
@@ -105,7 +107,7 @@ class Datafile:
         self.run_name = '_'.join(self.run_name.split(sep='_')[1:])
         #if not self.run_name:
             #logger.warning('No common name between file and folder. Check {}'.format(run_folder))
-        self.sample_id = filename.removesuffix('.txt')
+        self.sample_label = filename.removesuffix('.txt').split(sep='_')[0]
         
         #for other filetypes
         #self.date = file_comps[0]
@@ -114,6 +116,27 @@ class Datafile:
         #self.sample_id = file_comps[-2:]
         #logger.info('Creating Dataframe for cell {} (sample {}) in {}'.format(self.cell, self.sample_id, self.run_name))
 
+    def get_species_id(self): #ID_map = 'C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Sample Record - July 2022.csv'):
+        return None
+        
+        '''
+        #df = pd.read_csv(ID_map, header=0)
+        
+        
+        try:
+            row = df.loc[df['Sample']==self.sample_label]
+            definite = row['Definite']
+            if definite:
+                try:
+                    sample_id = row['Morphological ID']
+                    return sample_id
+                except:
+                    logger.warning('Dataframe columns not matched. Check code.')
+            return None
+        except:
+            logger.warning('Sample value {} not found in ID Map. Check {}'.format(self.sample_label, ID_map))
+            return None
+        '''
     def locate_run_map(self, folder='maps'):
         map_folder = project_path+folder+'/'
         if os.path.exists(map_folder):
@@ -165,6 +188,14 @@ class Datafile:
     def identify_peaks(self):
         return None
 
+    def noise_filter(self):
+        df = self.DataFrame
+        y = np.asarray( df['intensity'])
+        b, a = scipy.signal.butter(3, 0.01)
+
+        #df['intensity'] = scipy.signal.filtfilt(b, a, y)#gaussian_filter(y, 10)#scipy.signal.savgol_filter(y, 11, 2)
+        #self.DataFrame = df
+
     def peak_coords(self):
         df = self.DataFrame
         #need numpy array to use argrelmax?
@@ -175,15 +206,21 @@ class Datafile:
         int_max = y.max() 
         #normalize
         y = y/int_max
-        #peaks, other = scipy.signal.find_peaks(y, prominence=0.05*df_max)
+
+        indices, other = scipy.signal.find_peaks(y, prominence=0.1, distance=7)
         #alternatively, use argrelextrema?
-        n=200
-        indices = argrelmax(y, order=n)
+        #n=200
+        #indices = argrelmax(y, order=n)
         x_peaks = x[indices]
         y_peaks = y[indices]
         return x_peaks, y_peaks
 
     def plot_peaks(self):
+        df = self.DataFrame
+        #any changes here
+        
+    
+        
         x_peaks, y_peaks = self.peak_coords()
         #may want to get use out of x_peaks info
         plt.plot(x_peaks, y_peaks, 'xb')
@@ -192,7 +229,10 @@ class Datafile:
         for peak in x_peaks:
             plt.annotate(round(peak), xy=(peak, y_peaks[np.where(x_peaks == peak)]))
         #plt.vlines(x_peaks, ymin=0, ymax=y_peaks)
-        self.plot()
+        #need numpy array to use argrelmax?
+        
+
+        self.plot(df)
 
     def list_peaks(self):
         x_peaks, y_peaks = self.peak_coords()
@@ -207,15 +247,22 @@ class Datafile:
         return None
 
     #internal function to plot data, without_show exists for comparative purposes
-    def plot_without_show(self):
-        plt.plot(self.DataFrame['m/Z'], self.DataFrame['intensity']/self.DataFrame['intensity'].max())
+    def plot_without_show(self, df):
+        plt.plot(df['m/Z'], df['intensity']/self.DataFrame['intensity'].max())
         plt.xlabel('m/Z')
         plt.ylabel('Intensity (a.u.)')
     
-    def plot(self):
-        self.plot_without_show()
+    def plot(self, df):
+        self.plot_without_show(df)
         plt.show()
 
+    def plot_within_subplots(self, df, axes, index_x, index_y, x1, x2, y1, y2):
+        axes[index_x,index_y].plot(df['m/Z'], df['intensity']/self.DataFrame['intensity'].max())
+        axes[index_x,index_y].annotate(round(x1,2), xy=(x1, y1))
+        axes[index_x,index_y].annotate(round(x2,2), xy=(x2, y2))
+        
+        
+        pass
 
 
     def load_known_peaks(self, known_peaks_path="C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Mass_spec_peaks_fish.csv"):

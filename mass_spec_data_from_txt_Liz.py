@@ -11,11 +11,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from scipy.signal import argrelmax 
+from scipy.ndimage import gaussian_filter1d
 
 #ATTEMPTING LOGGING
 import logging
 import sys
 
+from matplotlib.ticker import FormatStrFormatter
 from Datafile import Datafile
 
 logger = logging.getLogger(__name__)
@@ -414,47 +416,99 @@ def print_species_matches_from_datafile(path):
 
 
 def comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks):
-    minimum = 0.25
+    
+    '''
+    minimum = 0.1
     #adjust peak list 
     x1_peaks_major = x1_peaks[np.where(y1_peaks > minimum)]
     y1_peaks_major = y1_peaks[np.where(y1_peaks > minimum)]
     x2_peaks_major = x2_peaks[np.where(y2_peaks > minimum)]
     y2_peaks_major = y2_peaks[np.where(y2_peaks > minimum)]
-    for peak in x1_peaks_major:
-        index1 = np.where(x1_peaks_major == peak)
-        index2 = find_nearest_index(x2_peaks_major, peak)
-        x1 = x1_peaks_major[index1]
-        x2 = x2_peaks_major[index2]
-        y1 = y1_peaks_major[index1]
-        y2 = y2_peaks_major[index2]
+    '''
+    
+    matched_peaks = []
+    for peak in x1_peaks:
+        index1 = int(np.where(x1_peaks == peak)[0])
+        index2 = int(find_nearest_index(x2_peaks, peak))
+        x1 = x1_peaks[index1]
+        x2 = x2_peaks[index2]
+        y1 = y1_peaks[index1]
+        y2 = y2_peaks[index2]
         #print('y2: {} y1: {}   x2: {}  x1:{}'.format(y2,y1,x2,x1))
-        print('y_distance: {}    x_distance: {}'.format(np.abs(y2-y1), np.abs(x2-x1)))
+        #print('y_distance: {}    x_distance: {}'.format(np.abs(y2-y1), np.abs(x2-x1)))
+        if np.abs(x2-x1) < 0.1:
+            matched_peaks.append((x1, x2, y1, y2))
         #euclidean_distance = np.sqrt((x2-x1)**2+(y2-y1)**2)
         #np.append(distances, euclidean_distance)
+    
     #return distances
+    return matched_peaks
+
+###Used to limit plots to grouping the closest to square
+def squarest_dims(number):
+    #find nearest square larger than number
+    root = np.ceil(np.sqrt(number))
+    #can it fit into n by (n-1) dimensions?
+    if number < ((root-1)*root):
+        return (root-1), root
+    else:
+        return root, root
+    
+def plot_within_subplots(obj, df, axes, index_x, index_y, x1, x2, y1, y2):
+    axes[index_x,index_y].plot(df['m/Z'], df['intensity']/obj.DataFrame['intensity'].max())
+    axes[index_x,index_y].annotate(round(x1,2), xy=(x1, y1))
+    axes[index_x,index_y].annotate(round(x2,2), xy=(x2, y2))
+    axes[index_x, index_y].xaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+    #axes[index_x,index_y].title(np.average([x1,x2]))
 
 def full_comparison(obj1, obj2):
     name1 = obj1.sample_id
     name2 = obj2.sample_id
     x1_peaks, y1_peaks = obj1.peak_coords()
     x2_peaks, y2_peaks = obj2.peak_coords()
-    print('Comaprison between {} and {}:'.format(name1,name2))
+    print('\n Comaprison between {} and {}:'.format(name1,name2))
     obj1.plot_peaks()
     obj2.plot_peaks()
-    print(comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks))
+    matched_peaks = comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks)
+    print('\n Number of matches: {}'.format(len(matched_peaks)))
+    n_of_graphs = len(matched_peaks)
+    nrows, ncols = squarest_dims(n_of_graphs)
+            
+    fig, axes = plt.subplots(nrows=int(nrows), ncols=int(ncols))
+    for (x1,x2, y1, y2) in matched_peaks:
+        avg = np.average([x1, x2])
+        dist = 0.5
+        frame_max = avg+dist
+        frame_min = avg-dist
+        df1 = obj1.clip_data(obj1.DataFrame, frame_min, frame_max)
+        df2 = obj2.clip_data(obj2.DataFrame, frame_min, frame_max)
+        
+        idx = matched_peaks.index((x1,x2,y1,y2))
+        index_x = int(np.floor(idx/ncols))
+        index_y = int(idx % ncols)
+        plot_within_subplots(obj1, df1, axes, index_x, index_y, x1, x2, y1, y2)
+        plot_within_subplots(obj2, df2, axes, index_x, index_y, x1, x2, y1, y2)
+        
+
+    fig.suptitle('{} and {} peak matches'.format(name1,name2))
+    fig.supxlabel('m/Z')
+    fig.supylabel('Intensity (a.u.)')
+    plt.tight_layout()
+        
+    plt.show()
 
 #test code for datafile class
-test_path = 'C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Usable Spectra July 2022/C04_A.txt'
+test_path = 'C:/Users/Daniel/Desktop/Programming/Mass Spec Project/Usable Spectra July 2022/LMQ116_A.txt'
 obj1 = Datafile(test_path)
-test_path=test_path.replace('C04_A', 'C08_C')
+test_path=test_path.replace('LMQ116_A', 'LMQ052_B')
 obj2 = Datafile(test_path)
 
 obj1.plot_peaks()
 obj2.plot_peaks()
-x1_peaks, y1_peaks = obj1.peak_coords()
-x2_peaks, y2_peaks = obj2.peak_coords()
-comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks)
-
+#x1_peaks, y1_peaks = obj1.peak_coords()
+#x2_peaks, y2_peaks = obj2.peak_coords()
+#print(comparison_metric(x1_peaks, y1_peaks, x2_peaks, y2_peaks))
+#full_comparison(obj1, obj2)
 
 
     
