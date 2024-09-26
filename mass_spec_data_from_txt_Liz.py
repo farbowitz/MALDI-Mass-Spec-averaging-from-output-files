@@ -348,7 +348,7 @@ class Title:
 
 '''
 
-#ATTEMPT ONE: LIZ THINKS I CAN JUST DO ANYTHING
+#ATTEMPT ONE:
 
 #test_run = Run(folder_path = project_path+'30062022_LMQ_Test Text Files/')
 
